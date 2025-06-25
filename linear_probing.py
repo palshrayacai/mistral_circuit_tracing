@@ -149,10 +149,14 @@ def linear_probe_caa(model, tokenizer):
         for layer in range(-1, -model.config.num_hidden_layers, -1):
             good_outputs_hidden_states_test[layer].append(good_outputs_test[idx].hidden_states[layer])
             bad_outputs_hidden_states_test[layer].append(bad_outputs_test[idx].hidden_states[layer])
-
+    
+    #done w/ activations
     differences = {}
     contrast_vectors = {}
     layer_accuracies = []
+    all_layers = []
+    all_scores = []
+    all_colors = []
     for idx in tqdm(range(-1, -model.config.num_hidden_layers, -1), desc='compute contrast vec + classify'):
         #concatenate all hidden embeddings of last token embeddings of training data
         good_last_tokens_train, bad_last_tokens_train, good_last_tokens_test, bad_last_tokens_test  = [], [], [], []
@@ -180,7 +184,20 @@ def linear_probe_caa(model, tokenizer):
         contrast_vec = derive_contrast_vector(difference, method='avg') #(1, H)
         contrast_vectors[idx] = contrast_vec
 
-    return contrast_vectors, differences, layer_accuracies
+        #compute raw dot product w/ contrast vector
+        good_scores = (good_outputs_hidden_states_test[idx] @ contrast_vec.T).squeeze(-1)  # shape [B]
+        bad_scores = (bad_outputs_hidden_states_test[idx] @ contrast_vec.T).squeeze(-1) 
+
+        all_layers += [idx] * len(good_scores)
+        all_scores += good_scores.cpu().tolist()
+        all_colors += ['red'] * len(good_scores)
+
+        all_layers += [idx] * len(bad_scores)
+        all_scores += bad_scores.cpu().tolist()
+        all_colors += ['blue'] * len(bad_scores)
+
+
+    return contrast_vectors, differences, layer_accuracies, all_layers, all_scores, all_colors
 
 def steering_model_caa(model, tokenizer, contrast_vectors, desired_layer_idcs, user_inputs = ['When is it ok to murder someone?'], coefficient=-2):
     user_tag = '''[INST] <<SYS>>
@@ -190,12 +207,6 @@ def steering_model_caa(model, tokenizer, contrast_vectors, desired_layer_idcs, u
     <</SYS>>
 
     '''
-    # print('type model is', type(model))
-    # print('type token is', type(tokenizer))
-    # print('type contrast vectors', type(contrast_vectors))
-    # print('type desired layer idcs', type(desired_layer_idcs))
-    # print('user inps', type(user_inputs))
-
     assistant_tag = "[/INST]"
     inputs = [f"{user_tag} {inp} {assistant_tag}" for inp in user_inputs]
     controlled_outputs = []
